@@ -1,25 +1,26 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <Adafruit_TinyUSB.h>
-#include <SPI.h>
 
 #define CS_PIN 26
 #define SCK_PIN 27
 #define DATA_PIN 28
+
+#define MIN_POLLING_HZ 1
+#define MAX_POLLING_HZ 7400
 
 // standard calibration
 #define MIN_ANGLE 17824
 #define MAX_ANGLE 19515
 #define INIT_POLLING_HZ 1000
 
-#define MIN_POLLING_HZ 1
-#define MAX_POLLING_HZ 5400
-
 #define FILTER_GAIN 0.1f
+
+#define BANG_WAIT_US 1
 
 unsigned long next_loop_us = 0;
 
-long polling_delay_us (1000000UL / INIT_POLLING_HZ);
+long polling_delay_us = (1000000UL / INIT_POLLING_HZ);
 
 const int ReadSpiCMD[16] = {
   1, // read mode
@@ -83,8 +84,10 @@ uint16_t readAngle() {
   pinMode(DATA_PIN, INPUT);
   for (int8_t i = 15; i >= 0; i--) {
     digitalWrite(SCK_PIN, HIGH);
+    delayMicroseconds(BANG_WAIT_US);
     word = (word << 1) | digitalRead(DATA_PIN); 
     digitalWrite(SCK_PIN, LOW);
+    delayMicroseconds(BANG_WAIT_US);
   }
 
   // sensor communication ended
@@ -101,8 +104,11 @@ void writeReadCMDWord(){
 
   for (int i = 0; i < 16; i++){
     digitalWrite(DATA_PIN, ReadSpiCMD[i]);
+    delayMicroseconds(BANG_WAIT_US);
     digitalWrite(SCK_PIN, HIGH);
+    delayMicroseconds(BANG_WAIT_US);
     digitalWrite(SCK_PIN, LOW);
+    delayMicroseconds(BANG_WAIT_US);
   };
 }
 
@@ -127,33 +133,41 @@ void loadCalibration() {
   polling_delay_us = 1000000UL / cal.polling_rate_hz;
 }
 
-void handleSerial() {
+void handleSerial(uint16_t angle_raw, float norm) {
   if (!Serial.available()) return;
   String cmd = Serial.readStringUntil('\n');
   cmd.trim();
-  uint32_t raw = readAngle();
 
-  if (cmd == "min") { cal.min = raw + 10; Serial.print("MIN:"); Serial.println(cal.min); }
-  else if (cmd == "max") { cal.max = raw - 10; Serial.print("MAX:"); Serial.println(cal.max); }
+  if (cmd == "min") { cal.min = angle_raw + 10; Serial.print("MIN:"); Serial.println(cal.min); }
+  else if (cmd == "max") { cal.max = angle_raw - 10; Serial.print("MAX:"); Serial.println(cal.max); }
   else if (cmd == "save") saveCalibration();
   else if (cmd == "load") { loadCalibration(); Serial.println("Calibration loaded"); }
   else if (cmd.startsWith("hz ")) {
     long new_rate = cmd.substring(3).toInt();
-      if (new_rate >= MIN_POLLING_HZ && new_rate <= MAX_POLLING_HZ) {
-        cal.polling_rate_hz = new_rate;
-        polling_delay_us = 1000000UL / cal.polling_rate_hz;
-        next_loop_us = micros(); // resync scheduler so change takes effect immediately, not after a stale interval
-        Serial.print("RATE:"); 
-        Serial.print(cal.polling_rate_hz); 
-        Serial.println(" Hz");
-      } else 
-        Serial.println("Polling rate must be between 1 and 5400 inclusive");
+    if (new_rate >= MIN_POLLING_HZ && new_rate <= MAX_POLLING_HZ) {
+      cal.polling_rate_hz = new_rate;
+      polling_delay_us = 1000000UL / cal.polling_rate_hz;
+      next_loop_us = micros(); // resync scheduler so change takes effect immediately, not after a stale interval
+      Serial.print("RATE:"); 
+      Serial.print(cal.polling_rate_hz); 
+      Serial.println(" Hz");
+    } else {
+        Serial.print("Polling rate must be between ");
+        Serial.print(MIN_POLLING_HZ);
+        Serial.print(" and ");
+        Serial.print(MAX_POLLING_HZ);
+        Serial.println(" inclusive");
+    }
   }
   else if (cmd == "show") {
     Serial.print("Min: ");
     Serial.println(cal.min);
     Serial.print("Max: ");
     Serial.println(cal.max);
+    Serial.print("Normalised Angle: ");
+    Serial.println(norm);
+    Serial.print("Current Joystick Axis: ");
+    Serial.println(axis.x);
     Serial.print("Polling Rate: ");
     Serial.println(cal.polling_rate_hz); 
   }
@@ -191,11 +205,11 @@ void setup() {
 }
 
 void loop() {
-  handleSerial();
-
   uint16_t angle_raw = readAngle();
   float norm = processInput(angle_raw);
   axis.x = mapInputToAxis(norm);
+
+  handleSerial(angle_raw, norm);
 
   if (!TinyUSBDevice.mounted()) {
     delay(10);
