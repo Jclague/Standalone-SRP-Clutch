@@ -4,7 +4,7 @@ Simple project to convert a Moza S-RP/S-RP2 Clutch into a standalone universal j
 Inspired by Yok0-99's [SR-P-Lite-Plus project](https://github.com/Yok0-99/SR-P-Lite-Plus)
 
 # Features
-- 1-5400hz Adjustable stable polling rate
+- 1-7400hz Adjustable stable polling rate (1000hz default)
 - 16 bit single pedal emulation
 - Pedal calibration stored between use
 
@@ -18,13 +18,13 @@ Inspired by Yok0-99's [SR-P-Lite-Plus project](https://github.com/Yok0-99/SR-P-L
 - USB-C cable
 
 # Description
-This project came around due to being sent the wrong clutch pedal from a distributor, but as the pedal I received was better than the one I ordered I decided to try and make it work. The pedal itself is simply an Infineon TLI5012B-E1000 GMR Angle Sensor which typically communicates with the rest of the pedal set over a 3 pin half-duplex SPI implementation, using a single data wire for communication both ways. This means that the SPI controller on the microcontroller can't be used, and instead the communication has been bitbanged.
+This project came around due to being sent the wrong clutch pedal from a distributor, but as the pedal I received was better than the one I ordered I decided to try and make it work. The pedal itself is simply an Infineon TLI5012B-E1000 GMR Angle Sensor attached to a lever, which typically communicates with the rest of the pedal set over a 3 pin half-duplex SPI implementation, using a single data wire for communication both ways. This means that the SPI controller on the microcontroller can't be used, and instead the communication has been bitbanged.
 
 # 3D Printed parts
 No 3D printed parts have been created for this project as I don't have a 3D printer. However, the [original inspiration project](https://github.com/Yok0-99/SR-P-Lite-Plus) provides 3D makerfiles that can likely be used with this implementation (may need modification)
 
 # Assembly
-Sensor RJ11 pinout:
+Sensor cable RJ11 pinout:
 - UNUSED          - Wire 1
 - Black - CS      - Wire 2 --> GPIO Pin 26
 - Red - SCK       - Wire 3 --> GPIO Pin 27
@@ -40,12 +40,13 @@ pin identifiers are screen printed above the pin on the waveshare RP2040-Zero, n
 
 # Instructions
 1. Solder RJ11 Socket to respective pins in the breakout above
-2. Flash RP2040-Zero with provided uf2
+2. Flash RP2040-Zero with provided .uf2 file
    - If plugging the microcontroller in for the first time it should automatically appear as a removable storage device
    - If not, unplug the microcontroller, then hold down the BOOT button while plugging the microcontroller in
    - If neither of these work, make sure your usb cable supports data transfer
-3. Check [HARDWARETESTER](https://hardwaretester.com/gamepad) on a chrome-based browser, the pedal should show up as Standalone SRP Clutch with a single axis. ENSURE THIS AXIS SCALES FROM -0.99997 TO 1.0, IF NOT, FOLLOW THE CALIBRATION TUTORIAL BELOW
-4. Assign controller axis to clutch pedal in game settings
+   - Drag .uf2 file onto the RP2040-Zero
+4. Check [HARDWARETESTER](https://hardwaretester.com/gamepad) on a chrome-based browser, the pedal should show up as Standalone SRP Clutch with a single axis. ENSURE THIS AXIS SCALES FROM -0.99997 TO 1.0, IF NOT, FOLLOW THE CALIBRATION TUTORIAL BELOW
+5. Assign controller axis to clutch pedal in game settings
 
 # Calibration
 If your pedal doesn't fit the pre-calibrated mapping:
