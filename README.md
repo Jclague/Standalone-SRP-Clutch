@@ -4,7 +4,7 @@ Simple project to convert a Moza S-RP/S-RP2 Clutch into a standalone universal j
 Inspired by Yok0-99's [SR-P-Lite-Plus project](https://github.com/Yok0-99/SR-P-Lite-Plus)
 
 # Features
-- 1-7400hz Adjustable stable polling rate (1000hz default)
+- 1-4000hz Adjustable stable polling rate (1000hz default)
 - 16 bit single pedal emulation
 - Pedal calibration stored between use
 
