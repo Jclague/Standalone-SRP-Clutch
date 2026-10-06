@@ -1,0 +1,40 @@
+.app-container {
+  min-height: 100dvh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg);
+  background: radial-gradient(circle at 50% 15%, rgba(255, 255, 255, 0.6) 0%, rgba(234, 229, 216, 0.5) 60%, var(--bg) 100%);
+  background-attachment: fixed;
+}
+
+[data-theme="dark"] .app-container {
+  background: #06091c;
+  background: radial-gradient(circle at 50% 20%, rgba(12, 18, 122, 0.42) 0%, rgba(6, 9, 28, 0.95) 55%, #06091c 100%);
+  background-attachment: fixed;
+}
+
+.content-panel {
+  flex: 1;
+  padding-top: 81px;
+  position: relative;
+  width: 100%;
+}
+
+.page {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding: 0 20px 40px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.4s ease, visibility 0.4s ease;
+}
+
+.page.active {
+  opacity: 1;
+  visibility: visible;
+  position: relative;
+  top: 0;
+}
