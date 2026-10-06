@@ -6,6 +6,7 @@ node_modules/
 # Production build outputs
 dist/
 build/
+firmware/Standalone-SRP-Clutch/build
 
 # Vite & Local environment
 .vite/
