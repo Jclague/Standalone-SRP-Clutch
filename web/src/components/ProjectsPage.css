@@ -1,0 +1,19 @@
+.projects-page {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.projects-card {
+  width: 100%;
+  max-width: 600px;
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 40px;
+  text-align: center;
+}
+
+.projects-card h2 {
+  margin-bottom: 16px;
+}
