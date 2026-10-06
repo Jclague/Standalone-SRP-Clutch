@@ -162,6 +162,7 @@
               background-color 0.15s ease,
               color 0.15s ease,
               transform 0.15s ease;
+  text-decoration: none;
 }
 
 .nav-button:hover {

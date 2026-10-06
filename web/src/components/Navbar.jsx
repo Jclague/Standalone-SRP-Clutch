@@ -98,8 +98,8 @@ export default function Navbar({ activePage, onPageChange }) {
           </div>
         </div>
         <div className="nav-right-section">
-          <button className="nav-button">Firmware</button>
-          <button className="nav-button">GitHub</button>
+          <a className="nav-button" href="https://github.com/Jclague/Standalone-SRP-Clutch/releases">Firmware</a>
+          <a className="nav-button" href="https://github.com/Jclague/Standalone-SRP-Clutch">GitHub</a>
         </div>  
       </div>
     </div>

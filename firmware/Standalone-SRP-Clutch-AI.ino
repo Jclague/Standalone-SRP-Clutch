@@ -399,7 +399,7 @@ void sendStatus(uint16_t raw, float norm, int16_t ax) {
   pkt.polling_rate_hz = cal.polling_rate_hz;
   pkt.is_calibrating = calibrating ? 1 : 0;
   pkt.fw_major = 2;
-  pkt.fw_minor = 1;
+  pkt.fw_minor = 3;
   pkt.fw_patch = 0;
   Serial.write((uint8_t*)&pkt, sizeof(pkt));
 }
