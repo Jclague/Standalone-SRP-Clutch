@@ -8,28 +8,22 @@
 
 #define MIN_POLLING_HZ 1
 #define MAX_POLLING_HZ 7400
-
-// standard calibration
-#define MIN_ANGLE 17824
-#define MAX_ANGLE 19515
 #define INIT_POLLING_HZ 1000
 
-#define FILTER_GAIN 0.1f
+#define MIN_ANGLE 17824
+#define MAX_ANGLE 19515
 
 #define BANG_WAIT_US 1
+#define CAL_TIMEOUT_MS 15000
+
+// Deadzone constants
+static const float TOP_DEADZONE = 0.04f;
+static const float BOTTOM_DEADZONE = 0.06f;
+static const float INV_ACTIVE_RANGE = 1.0f / (1.0f - TOP_DEADZONE - BOTTOM_DEADZONE); // Precalculated reciprocal
 
 unsigned long next_loop_us = 0;
 long polling_delay_us = (1000000UL / INIT_POLLING_HZ);
 
-const int ReadSpiCMD[16] = {
-  1, // read mode
-  0, 0, 0, 0, // lock value - default access
-  0, // update register access
-  0, 0, 0, 0, 1, 0, // 6-bit address - AVAL stored at register 0x02
-  0, 0, 0, 1 // number of data words 
-};
-
-#define EEPROM_MAGIC_OLD 0x0B0057ED
 #define CAL_MAGIC 0x4D435635
 
 struct calibration_t {
@@ -42,6 +36,9 @@ struct calibration_t {
   uint8_t curve_type; // 0 = Smooth (Cubic), 1 = Linear
 } cal;
 
+// Precalculated reciprocal span: 1.0f / (cal.max - cal.min) for division-free normalization
+float cal_inv_span = 1.0f / (float)(MAX_ANGLE - MIN_ANGLE);
+
 Adafruit_USBD_HID hid;
 
 uint8_t hid_desc[] = {
@@ -50,97 +47,116 @@ uint8_t hid_desc[] = {
   0x75,0x10,0x95,0x01,0x81,0x02,0xC0
 };
 
-struct axis_t { int16_t x;} axis;
+struct axis_t { int16_t x; } axis;
 
-// Spline data
+// Precomputed cubic polynomial coefficients for division-free Horner evaluation:
+// S_i(t) = a[i] + t*(b[i] + t*(c[i] + t*d[i])) where t = (x - spline_x[i])
 float spline_x[6];
-float spline_y[6];
-float spline_d[6]; // Fritsch-Carlson tangents
+float poly_a[5];
+float poly_b[5];
+float poly_c[5];
+float poly_d[5];
 
-// Calibration mode
+// Calibration state
 bool calibrating = false;
 uint16_t cal_observed_min = 65535;
 uint16_t cal_observed_max = 0;
 unsigned long cal_start_time = 0;
-#define CAL_TIMEOUT_MS 15000
 
-void writeReadCMDWord();
-uint16_t readAngle();
 void saveCalibration();
+void sendCalStatus(uint8_t status);
+void sendAck(uint8_t cmd_id);
+void sendCurveData();
 
+void updateCalSpan() {
+  if (cal.max > cal.min) {
+    cal_inv_span = 1.0f / (float)(cal.max - cal.min);
+  } else {
+    cal_inv_span = 0.0f;
+  }
+}
+
+// Precomputes polynomial segments to allow ultra-fast Horner evaluation in applyInputCurve
 void updateSplineCoefficients() {
   for (int i = 0; i < 6; i++) {
     spline_x[i] = cal.curve_x[i];
-    spline_y[i] = cal.curve_y[i];
   }
-
-  if (cal.curve_type != 0) return; // Only Monotone Cubic Spline needs tangents
 
   float h[5];
   float delta[5];
   for (int i = 0; i < 5; i++) {
-    h[i] = spline_x[i+1] - spline_x[i];
-    delta[i] = (h[i] > 0.00001f) ? (spline_y[i+1] - spline_y[i]) / h[i] : 0.0f;
+    h[i] = spline_x[i + 1] - spline_x[i];
+    delta[i] = (h[i] > 0.00001f) ? (cal.curve_y[i + 1] - cal.curve_y[i]) / h[i] : 0.0f;
   }
 
-  spline_d[0] = delta[0];
-  spline_d[5] = delta[4];
+  if (cal.curve_type == 1) {
+    // Linear mode: b[i] is the slope, c and d are 0
+    for (int i = 0; i < 5; i++) {
+      poly_a[i] = cal.curve_y[i];
+      poly_b[i] = delta[i];
+      poly_c[i] = 0.0f;
+      poly_d[i] = 0.0f;
+    }
+    return;
+  }
+
+  // Monotone Cubic Hermite Spline (Fritsch-Carlson method)
+  float d[6];
+  d[0] = delta[0];
+  d[5] = delta[4];
   for (int i = 1; i <= 4; i++) {
-    spline_d[i] = (delta[i-1] + delta[i]) * 0.5f;
+    d[i] = (delta[i - 1] + delta[i]) * 0.5f;
   }
 
-  // Fritsch-Carlson condition to guarantee monotonicity and flat plateaus
+  // Monotonicity enforcement
   for (int i = 0; i < 5; i++) {
     if (fabsf(delta[i]) < 0.00001f) {
-      spline_d[i] = 0.0f;
-      spline_d[i+1] = 0.0f;
+      d[i] = 0.0f;
+      d[i + 1] = 0.0f;
     } else {
-      float alpha = spline_d[i] / delta[i];
-      float beta = spline_d[i+1] / delta[i];
-      if (alpha < 0.0f) spline_d[i] = 0.0f;
-      if (beta < 0.0f) spline_d[i+1] = 0.0f;
+      float alpha = d[i] / delta[i];
+      float beta = d[i + 1] / delta[i];
+      if (alpha < 0.0f) d[i] = 0.0f;
+      if (beta < 0.0f) d[i + 1] = 0.0f;
       float mag2 = alpha * alpha + beta * beta;
       if (mag2 > 9.0f) {
         float tau = 3.0f / sqrtf(mag2);
-        spline_d[i] = tau * alpha * delta[i];
-        spline_d[i+1] = tau * beta * delta[i];
+        d[i] = tau * alpha * delta[i];
+        d[i + 1] = tau * beta * delta[i];
       }
+    }
+  }
+
+  // Convert Hermite basis to standard polynomial form for Horner evaluation:
+  // S_i(t) = a + b*t + c*t^2 + d*t^3
+  for (int i = 0; i < 5; i++) {
+    poly_a[i] = cal.curve_y[i];
+    poly_b[i] = d[i];
+    if (h[i] > 0.00001f) {
+      float inv_h = 1.0f / h[i];
+      float inv_h2 = inv_h * inv_h;
+      poly_c[i] = (3.0f * delta[i] - 2.0f * d[i] - d[i + 1]) * inv_h;
+      poly_d[i] = (d[i] + d[i + 1] - 2.0f * delta[i]) * inv_h2;
+    } else {
+      poly_c[i] = 0.0f;
+      poly_d[i] = 0.0f;
     }
   }
 }
 
-float applyInputCurve(float normalized) {
+// Division-free Horner-form spline evaluation (only 3 multiply-adds, zero division)
+inline float applyInputCurve(float normalized) {
   int i = 0;
-  for (i = 0; i < 5; i++) {
-    if (normalized <= spline_x[i+1]) break;
+  for (i = 0; i < 4; i++) {
+    if (normalized <= spline_x[i + 1]) break;
   }
-  if (i >= 5) i = 4;
-  
-  float h = spline_x[i+1] - spline_x[i];
-  if (h < 0.0001f) return spline_y[i];
-  
   float t = normalized - spline_x[i];
-  float t_norm = t / h;
-
-  if (cal.curve_type == 1) { // Linear
-    float ratio = t_norm;
-    return constrain(spline_y[i] + ratio * (spline_y[i+1] - spline_y[i]), 0.0f, 1.0f);
-  }
-
-  // Monotone Cubic Hermite Spline (curveType == 0)
-  float t2 = t_norm * t_norm;
-  float t3 = t2 * t_norm;
-
-  float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
-  float h10 = t3 - 2.0f * t2 + t_norm;
-  float h01 = -2.0f * t3 + 3.0f * t2;
-  float h11 = t3 - t2;
-
-  float result = spline_y[i] * h00 + h * spline_d[i] * h10 + spline_y[i+1] * h01 + h * spline_d[i+1] * h11;
+  float result = poly_a[i] + t * (poly_b[i] + t * (poly_c[i] + t * poly_d[i]));
   return constrain(result, 0.0f, 1.0f);
 }
 
-float processInput(uint16_t signal){
+// Low-latency asymmetric input filter with dynamic velocity boost
+inline float processInput(uint16_t signal) {
   static float filteredSignal = 0.0f;
   static bool filterInit = false;
   if (!filterInit) {
@@ -151,9 +167,7 @@ float processInput(uint16_t signal){
   float diff = (float)signal - filteredSignal;
   float absDiff = fabsf(diff);
 
-  // Asymmetric filtering:
-  // Fast attack (instant disengage, sub-millisecond bite) on pedal press
-  // Smooth modulated decay (tremor and noise rejection) on pedal release
+  // Fast attack on pedal press, smooth decay on pedal release
   float baseAlpha;
   if (cal.max >= cal.min) {
     baseAlpha = (diff >= 0.0f) ? 0.85f : 0.25f;
@@ -161,68 +175,63 @@ float processInput(uint16_t signal){
     baseAlpha = (diff <= 0.0f) ? 0.85f : 0.25f;
   }
 
-  // Dynamic velocity boost: large stomps/dumps bypass filter completely (latency -> 0ms)
-  float velocityBoost = constrain(absDiff / 20.0f, 0.0f, 1.0f);
+  // Dynamic velocity boost: stomps bypass filter completely
+  float velocityBoost = constrain(absDiff * 0.05f, 0.0f, 1.0f); // * 0.05f == / 20.0f
   float alpha = baseAlpha + (1.0f - baseAlpha) * (velocityBoost * velocityBoost);
 
   filteredSignal += alpha * diff;
 
-  if (cal.max <= cal.min) return 0.0f;
-  float rawNorm = (filteredSignal - (float)cal.min) / (float)(cal.max - cal.min);
+  if (cal_inv_span <= 0.0f) return 0.0f;
+
+  // Multiply by reciprocal span (zero software division)
+  float rawNorm = (filteredSignal - (float)cal.min) * cal_inv_span;
   rawNorm = constrain(rawNorm, 0.0f, 1.0f);
 
-  // Smart Deadzones & Hard Limit Snapping:
-  // Top Deadzone: 4% (resting foot immunity against accidental slip)
-  // Bottom Deadzone: 6% (guarantees 100% full disengagement under rig flex)
-  const float TOP_DEADZONE = 0.04f;
-  const float BOTTOM_DEADZONE = 0.06f;
-
-  float effectiveNorm;
   if (rawNorm <= TOP_DEADZONE) {
-    effectiveNorm = 0.0f;
+    return 0.0f;
   } else if (rawNorm >= (1.0f - BOTTOM_DEADZONE)) {
-    effectiveNorm = 1.0f;
+    return 1.0f;
   } else {
-    effectiveNorm = (rawNorm - TOP_DEADZONE) / (1.0f - TOP_DEADZONE - BOTTOM_DEADZONE);
+    return constrain((rawNorm - TOP_DEADZONE) * INV_ACTIVE_RANGE, 0.0f, 1.0f);
   }
-
-  return constrain(effectiveNorm, 0.0f, 1.0f);
 }
 
-int16_t mapInputToAxis(float normSignal){
-  // Firm limit snapping: silence USB HID report at boundaries
+inline int16_t mapInputToAxis(float normSignal) {
   if (normSignal <= 0.0001f) return -32767;
   if (normSignal >= 0.9999f) return 32767;
-  return ((float)(normSignal * 2.0f) - 1.0f) * 32767;
+  return (int16_t)(((normSignal * 2.0f) - 1.0f) * 32767.0f);
 }
 
-uint16_t readAngle() {
-  uint16_t word = 0;
+// Bitbang 16-bit command word to Infineon TLI5012B over half-duplex SPI
+inline void writeReadCMDWord() {
+  pinMode(DATA_PIN, OUTPUT);
+  // Command word 0x8021: Read Mode (bit 15), Address 0x02 AVAL (bits 9..4), 1 data word (bits 3..0)
+  uint16_t cmd = 0x8021;
+  for (int8_t i = 15; i >= 0; i--) {
+    digitalWrite(DATA_PIN, (cmd >> i) & 1);
+    delayMicroseconds(BANG_WAIT_US);
+    digitalWrite(SCK_PIN, HIGH);
+    delayMicroseconds(BANG_WAIT_US);
+    digitalWrite(SCK_PIN, LOW);
+    delayMicroseconds(BANG_WAIT_US);
+  }
+}
+
+// Read raw angle from TLI5012B
+inline uint16_t readAngle() {
   digitalWrite(CS_PIN, LOW);
   writeReadCMDWord();
   pinMode(DATA_PIN, INPUT);
+  uint16_t word = 0;
   for (int8_t i = 15; i >= 0; i--) {
     digitalWrite(SCK_PIN, HIGH);
     delayMicroseconds(BANG_WAIT_US);
-    word = (word << 1) | digitalRead(DATA_PIN); 
+    word = (word << 1) | digitalRead(DATA_PIN);
     digitalWrite(SCK_PIN, LOW);
     delayMicroseconds(BANG_WAIT_US);
   }
   digitalWrite(CS_PIN, HIGH);
-  word = word & 0x7FFF;
-  return word;
-}
-
-void writeReadCMDWord(){
-  pinMode(DATA_PIN, OUTPUT);
-  for (int i = 0; i < 16; i++){
-    digitalWrite(DATA_PIN, ReadSpiCMD[i]);
-    delayMicroseconds(BANG_WAIT_US);
-    digitalWrite(SCK_PIN, HIGH);
-    delayMicroseconds(BANG_WAIT_US);
-    digitalWrite(SCK_PIN, LOW);
-    delayMicroseconds(BANG_WAIT_US);
-  };
+  return word & 0x7FFF;
 }
 
 void saveCalibration() {
@@ -231,38 +240,35 @@ void saveCalibration() {
   EEPROM.commit();
 }
 
+void resetCalibrationDefaults() {
+  cal.magic = CAL_MAGIC;
+  cal.min = MIN_ANGLE;
+  cal.max = MAX_ANGLE;
+  cal.polling_rate_hz = INIT_POLLING_HZ;
+  cal.curve_x[0] = 0.0f; cal.curve_y[0] = 0.0f;
+  cal.curve_x[1] = 0.2f; cal.curve_y[1] = 0.2f;
+  cal.curve_x[2] = 0.4f; cal.curve_y[2] = 0.4f;
+  cal.curve_x[3] = 0.6f; cal.curve_y[3] = 0.6f;
+  cal.curve_x[4] = 0.8f; cal.curve_y[4] = 0.8f;
+  cal.curve_x[5] = 1.0f; cal.curve_y[5] = 1.0f;
+  cal.curve_type = 0;
+  saveCalibration();
+}
+
 void loadCalibration() {
   EEPROM.get(0, cal);
 
-  if (cal.magic == EEPROM_MAGIC_OLD || cal.magic == 0x4D435634) {
-    cal.polling_rate_hz = (cal.polling_rate_hz >= MIN_POLLING_HZ && cal.polling_rate_hz <= MAX_POLLING_HZ) ? cal.polling_rate_hz : INIT_POLLING_HZ;
-    cal.curve_x[0] = 0.0f; cal.curve_y[0] = 0.0f;
-    cal.curve_x[1] = 0.2f; cal.curve_y[1] = 0.2f;
-    cal.curve_x[2] = 0.4f; cal.curve_y[2] = 0.4f;
-    cal.curve_x[3] = 0.6f; cal.curve_y[3] = 0.6f;
-    cal.curve_x[4] = 0.8f; cal.curve_y[4] = 0.8f;
-    cal.curve_x[5] = 1.0f; cal.curve_y[5] = 1.0f;
-    cal.curve_type = 0;
-    saveCalibration(); 
-  } else if (cal.magic != CAL_MAGIC || cal.max <= cal.min || cal.polling_rate_hz < MIN_POLLING_HZ || cal.polling_rate_hz > MAX_POLLING_HZ) {
-    cal.min = MIN_ANGLE;
-    cal.max = MAX_ANGLE;
-    cal.polling_rate_hz = INIT_POLLING_HZ;
-    cal.curve_x[0] = 0.0f; cal.curve_y[0] = 0.0f;
-    cal.curve_x[1] = 0.2f; cal.curve_y[1] = 0.2f;
-    cal.curve_x[2] = 0.4f; cal.curve_y[2] = 0.4f;
-    cal.curve_x[3] = 0.6f; cal.curve_y[3] = 0.6f;
-    cal.curve_x[4] = 0.8f; cal.curve_y[4] = 0.8f;
-    cal.curve_x[5] = 1.0f; cal.curve_y[5] = 1.0f;
-    cal.curve_type = 0;
-    saveCalibration();
+  // Validate or reset
+  if (cal.magic != CAL_MAGIC || cal.max <= cal.min ||
+      cal.polling_rate_hz < MIN_POLLING_HZ || cal.polling_rate_hz > MAX_POLLING_HZ) {
+    resetCalibrationDefaults();
   }
 
   if (cal.curve_type != 0 && cal.curve_type != 1) {
     cal.curve_type = 0;
   }
 
-  // If intermediate curve points are collapsed/corrupted, heal them while preserving start/end Y
+  // Self-heal corrupted intermediate points while preserving custom start/finish Y
   if (cal.curve_x[1] <= 0.02f && cal.curve_x[4] <= 0.02f) {
     float startY = cal.curve_y[0];
     float endY = cal.curve_y[5];
@@ -278,86 +284,26 @@ void loadCalibration() {
   }
 
   bool hasNaN = false;
-  for (int i=0; i<6; i++) {
+  for (int i = 0; i < 6; i++) {
     if (isnan(cal.curve_x[i]) || isnan(cal.curve_y[i])) hasNaN = true;
   }
   if (hasNaN) {
-    cal.curve_x[0] = 0.0f; cal.curve_y[0] = 0.0f;
-    cal.curve_x[1] = 0.2f; cal.curve_y[1] = 0.2f;
-    cal.curve_x[2] = 0.4f; cal.curve_y[2] = 0.4f;
-    cal.curve_x[3] = 0.6f; cal.curve_y[3] = 0.6f;
-    cal.curve_x[4] = 0.8f; cal.curve_y[4] = 0.8f;
-    cal.curve_x[5] = 1.0f; cal.curve_y[5] = 1.0f;
-    saveCalibration();
+    resetCalibrationDefaults();
   }
 
+  updateCalSpan();
   polling_delay_us = (cal.polling_rate_hz > 4000) ? 0 : (1000000UL / cal.polling_rate_hz);
   updateSplineCoefficients();
 }
 
-void handleSerial(uint16_t angle_raw, float norm) {
-  if (!Serial.available()) return;
-  String cmd = Serial.readStringUntil('\n');
-  cmd.trim();
-
-  if (cmd == "min") { cal.min = angle_raw + 10; Serial.print("MIN:"); Serial.println(cal.min); }
-  else if (cmd == "max") { cal.max = angle_raw - 10; Serial.print("MAX:"); Serial.println(cal.max); }
-  else if (cmd == "save") saveCalibration();
-  else if (cmd == "load") { loadCalibration(); Serial.println("Calibration loaded"); }
-  else if (cmd.startsWith("hz ")) {
-    long new_rate = cmd.substring(3).toInt();
-    if (new_rate >= MIN_POLLING_HZ && new_rate <= MAX_POLLING_HZ) {
-      cal.polling_rate_hz = new_rate;
-      polling_delay_us = 1000000UL / cal.polling_rate_hz;
-      next_loop_us = micros();
-      Serial.print("RATE:"); 
-      Serial.print(cal.polling_rate_hz); 
-      Serial.println(" Hz");
-    } else {
-        Serial.print("Polling rate must be between ");
-        Serial.print(MIN_POLLING_HZ);
-        Serial.print(" and ");
-        Serial.print(MAX_POLLING_HZ);
-        Serial.println(" inclusive");
-    }
-  }
-  else if (cmd == "show") {
-    Serial.print("Min: "); Serial.println(cal.min);
-    Serial.print("Max: "); Serial.println(cal.max);
-    Serial.print("Normalised Angle: "); Serial.println(norm);
-    Serial.print("Current Joystick Axis: "); Serial.println(axis.x);
-    Serial.print("Polling Rate: "); Serial.println(cal.polling_rate_hz); 
-  }
-  else if (cmd == "reset") { 
-    cal.min = MIN_ANGLE; 
-    cal.max = MAX_ANGLE; 
-    cal.polling_rate_hz = INIT_POLLING_HZ; 
-    cal.curve_x[0] = 0.0f; cal.curve_y[0] = 0.0f;
-    cal.curve_x[1] = 0.2f; cal.curve_y[1] = 0.2f;
-    cal.curve_x[2] = 0.4f; cal.curve_y[2] = 0.4f;
-    cal.curve_x[3] = 0.6f; cal.curve_y[3] = 0.6f;
-    cal.curve_x[4] = 0.8f; cal.curve_y[4] = 0.8f;
-    cal.curve_x[5] = 1.0f; cal.curve_y[5] = 1.0f;
-    cal.curve_type = 0;
-    updateSplineCoefficients();
-    Serial.println("Calibration reset"); 
-    polling_delay_us = 1000000UL / cal.polling_rate_hz;
-    next_loop_us = micros();
-  }
-}
-
 void sendCalStatus(uint8_t status) {
-  uint8_t buf[2];
-  buf[0] = 0x82;
-  buf[1] = status;
+  uint8_t buf[2] = { 0x82, status };
   Serial.write(buf, 2);
   Serial.flush();
 }
 
 void sendAck(uint8_t cmd_id) {
-  uint8_t buf[2];
-  buf[0] = 0x83;
-  buf[1] = cmd_id;
+  uint8_t buf[2] = { 0x83, cmd_id };
   Serial.write(buf, 2);
   Serial.flush();
 }
@@ -365,9 +311,9 @@ void sendAck(uint8_t cmd_id) {
 void sendCurveData() {
   uint8_t buf[50];
   buf[0] = 0x85;
-  for (int i=0; i<6; i++) {
-    memcpy(&buf[1 + i*8], &cal.curve_x[i], 4);
-    memcpy(&buf[1 + i*8 + 4], &cal.curve_y[i], 4);
+  for (int i = 0; i < 6; i++) {
+    memcpy(&buf[1 + i * 8], &cal.curve_x[i], 4);
+    memcpy(&buf[1 + i * 8 + 4], &cal.curve_y[i], 4);
   }
   buf[49] = (cal.curve_type == 1) ? 1 : 0;
   Serial.write(buf, 50);
@@ -388,7 +334,7 @@ struct __attribute__((packed)) status_packet_t {
   uint8_t fw_patch;
 };
 
-void sendStatus(uint16_t raw, float norm, int16_t ax) {
+inline void sendStatus(uint16_t raw, float norm, int16_t ax) {
   status_packet_t pkt;
   pkt.id = 0x81;
   pkt.raw = raw;
@@ -400,7 +346,7 @@ void sendStatus(uint16_t raw, float norm, int16_t ax) {
   pkt.is_calibrating = calibrating ? 1 : 0;
   pkt.fw_major = 2;
   pkt.fw_minor = 3;
-  pkt.fw_patch = 0;
+  pkt.fw_patch = 1;
   Serial.write((uint8_t*)&pkt, sizeof(pkt));
 }
 
@@ -417,6 +363,7 @@ void finishCalibration() {
     cal.min = (cal_observed_min <= 65525) ? cal_observed_min + 10 : cal_observed_min;
     cal.max = (cal_observed_max >= 10) ? cal_observed_max - 10 : cal_observed_max;
     calibrating = false;
+    updateCalSpan();
     sendCalStatus(2); // complete - sent before flash write
     saveCalibration();
   } else {
@@ -425,17 +372,17 @@ void finishCalibration() {
   }
 }
 
-void updateCalibration(uint16_t raw_angle) {
+inline void updateCalibration(uint16_t raw_angle) {
   if (!calibrating) return;
   if (raw_angle < cal_observed_min) cal_observed_min = raw_angle;
   if (raw_angle > cal_observed_max) cal_observed_max = raw_angle;
-  
   if (millis() - cal_start_time > CAL_TIMEOUT_MS) {
     finishCalibration();
   }
 }
 
-void handleWebUSBCommand(uint8_t* buf, int count) {
+// Binary command dispatcher from WebSerial configurator
+void handleCommand(uint8_t* buf, int count) {
   if (count < 1) return;
   uint8_t cmd = buf[0];
   switch (cmd) {
@@ -445,23 +392,13 @@ void handleWebUSBCommand(uint8_t* buf, int count) {
     case 0x03: // STOP_CAL
       if (calibrating) finishCalibration();
       break;
-    case 0x04: // SET_CURVE
+    case 0x04: // SET_CURVE (50 bytes: 1 cmd + 6*8 floats + 1 type)
       if (count >= 50) {
-        for (int i=0; i<6; i++) {
-          memcpy(&cal.curve_x[i], &buf[1 + i*8], 4);
-          memcpy(&cal.curve_y[i], &buf[1 + i*8 + 4], 4);
+        for (int i = 0; i < 6; i++) {
+          memcpy(&cal.curve_x[i], &buf[1 + i * 8], 4);
+          memcpy(&cal.curve_y[i], &buf[1 + i * 8 + 4], 4);
         }
         cal.curve_type = buf[49];
-        updateSplineCoefficients();
-        sendAck(cmd);
-      } else if (count >= 34) {
-        cal.curve_x[0] = 0.0f; cal.curve_y[0] = 0.0f;
-        for (int i=0; i<4; i++) {
-          memcpy(&cal.curve_x[i+1], &buf[1 + i*8], 4);
-          memcpy(&cal.curve_y[i+1], &buf[1 + i*8 + 4], 4);
-        }
-        cal.curve_x[5] = 1.0f; cal.curve_y[5] = 1.0f;
-        cal.curve_type = buf[33];
         updateSplineCoefficients();
         sendAck(cmd);
       }
@@ -475,15 +412,8 @@ void handleWebUSBCommand(uint8_t* buf, int count) {
       sendCurveData();
       break;
     case 0x07: // RESET_CURVE
-      cal.curve_x[0] = 0.0f; cal.curve_y[0] = 0.0f;
-      cal.curve_x[1] = 0.2f; cal.curve_y[1] = 0.2f;
-      cal.curve_x[2] = 0.4f; cal.curve_y[2] = 0.4f;
-      cal.curve_x[3] = 0.6f; cal.curve_y[3] = 0.6f;
-      cal.curve_x[4] = 0.8f; cal.curve_y[4] = 0.8f;
-      cal.curve_x[5] = 1.0f; cal.curve_y[5] = 1.0f;
-      cal.curve_type = 0;
+      resetCalibrationDefaults();
       updateSplineCoefficients();
-      saveCalibration();
       sendAck(cmd);
       sendCurveData();
       break;
@@ -495,6 +425,7 @@ void handleWebUSBCommand(uint8_t* buf, int count) {
         if (new_max > new_min) {
           cal.min = new_min;
           cal.max = new_max;
+          updateCalSpan();
           sendAck(cmd);
         }
       }
@@ -507,6 +438,7 @@ void handleWebUSBCommand(uint8_t* buf, int count) {
           cal.polling_rate_hz = new_hz;
           polling_delay_us = (new_hz > 4000) ? 0 : (1000000UL / cal.polling_rate_hz);
           next_loop_us = micros();
+          sendAck(cmd);
         }
       }
       break;
@@ -518,7 +450,7 @@ void setup() {
 
   TinyUSBDevice.setManufacturerDescriptor("Jclague");
   TinyUSBDevice.setProductDescriptor("Standalone SRP Clutch");
-  TinyUSBDevice.setID(0xFA57, 0xFA57); // Changed PID to force Windows driver re-enumeration
+  TinyUSBDevice.setID(0xFA57, 0xFA57);
 
   next_loop_us = micros();
 
@@ -551,7 +483,7 @@ void loop() {
     last_client_activity_ms = millis();
   }
 
-  // Autonomous 60 Hz telemetry streaming when host is connected/listening
+  // 60 Hz autonomous telemetry streaming when web configurator is connected
   unsigned long now_us = micros();
   bool host_listening = (Serial && Serial.dtr()) || (millis() - last_client_activity_ms < 3000);
   if (host_listening && ((unsigned long)(now_us - last_telemetry_tx_us) >= 16666UL)) {
@@ -569,30 +501,27 @@ void loop() {
         offset++;
       } else if (cmd == 0x04) {
         if (web_count - offset >= 50) {
-          handleWebUSBCommand(&web_buf[offset], web_count - offset);
+          handleCommand(&web_buf[offset], web_count - offset);
           offset += 50;
         } else {
-          // Wait for rest of 50-byte curve packet
-          break;
+          break; // Wait for full 50-byte packet
         }
       } else if (cmd == 0x08) {
         if (web_count - offset >= 5) {
-          handleWebUSBCommand(&web_buf[offset], web_count - offset);
+          handleCommand(&web_buf[offset], web_count - offset);
           offset += 5;
         } else {
-          // Wait for rest of 5-byte cal range packet
-          break;
+          break; // Wait for full 5-byte packet
         }
       } else if (cmd == 0x09) {
         if (web_count - offset >= 3) {
-          handleWebUSBCommand(&web_buf[offset], web_count - offset);
+          handleCommand(&web_buf[offset], web_count - offset);
           offset += 3;
         } else {
-          // Wait for rest of 3-byte polling rate packet
-          break;
+          break; // Wait for full 3-byte packet
         }
       } else {
-        handleWebUSBCommand(&web_buf[offset], web_count - offset);
+        handleCommand(&web_buf[offset], web_count - offset);
         offset++;
       }
     }
@@ -604,8 +533,7 @@ void loop() {
         web_count = 0;
       }
     } else if (web_count >= 128) {
-      // Prevent overflow if buffer fills with unparseable data
-      web_count = 0;
+      web_count = 0; // Guard against corrupted buffer
     }
   }
 
@@ -622,7 +550,8 @@ void loop() {
     yield();
   }
   next_loop_us += polling_delay_us;
-  
-  if ((long)(micros() - next_loop_us) > 0)
+
+  if ((long)(micros() - next_loop_us) > 0) {
     next_loop_us = micros();
+  }
 }

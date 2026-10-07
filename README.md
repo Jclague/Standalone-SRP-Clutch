@@ -7,10 +7,11 @@ Inspired by Yok0-99's [SR-P-Lite-Plus project](https://github.com/Yok0-99/SR-P-L
 - 1-4000hz Adjustable stable polling rate (1000hz default and max usb polling rate)
 - 16 bit single pedal emulation
 - Pedal calibration stored between use
+- Custom web app configurator for custom calibration and response curves
 
 # Requirements
 - Moza S-RP or Moza S-RP 2 clutch pedal
-- Waveshare RP2040-Zero arduino (or any other TinyUSB supported microcontroller after a gpio pin remap, *NO GUARANTEE*)
+- Waveshare RP2040-Zero arduino
 - 6p6c RJ11 socket
     - Ideally with wires already attached (I used the [Concactum Media Modular RJ11 Telephone Socket](https://www.screwfix.com/p/contactum-media-modular-rj11-telephone-data-socket-black/210rk))
     - If using a through hole/punch down socket, wires are also required
@@ -45,28 +46,16 @@ pin identifiers are screen printed above the pin on the waveshare RP2040-Zero, n
    - If not, unplug the microcontroller, then hold down the BOOT button while plugging the microcontroller in
    - If neither of these work, make sure your usb cable supports data transfer
    - Drag .uf2 file onto the RP2040-Zero
-4. Check [HARDWARETESTER](https://hardwaretester.com/gamepad) on a chrome-based browser, the pedal should show up as Standalone SRP Clutch with a single axis. ENSURE THIS AXIS SCALES FROM -0.99997 TO 1.0, IF NOT, FOLLOW THE CALIBRATION TUTORIAL BELOW
+4. Use https://microclutch.pages.dev/ to calibrate and configure the pedal 
 5. Assign controller axis to clutch pedal in game settings
 
 # Calibration
-If your pedal doesn't fit the pre-calibrated mapping:
-1. Go to https://webserialterminal.com/ on any chrome-based browser
-2. Set the Baud Rate to 115200
-
-   <p align="center"><img width="590" height="180" alt="image" src="https://github.com/user-attachments/assets/48bfaf36-26f9-4d19-8195-07b6a2fb84a0" style=""/></p>
-
-3. Press connect and select TinyUSB Serial from the drop down
-4. Type **min** into the terminal text box
-5. Hold the pedal fully pressed and type **max**
-6. Type **show** into the terminal to check the current settings
-   - Joystick Axis should sweep between -32767 and 32767
-7. Type **save** into the terminal to save the current calibration into the microcontroller's memory
-
-# Serial terminal command key
-- Min - Sets the minimum angle for calibration
-- Max - Sets the maximum angle for calibration
-- Save - Saves the current calibration to memory
-- Load - Loads the current calibration from memory
-- Hz 1-7400 - Sets the current polling rate in Hz between 1-7400 inclusive 
-- Show - Shows current calibration information
-- Reset - Resets pedal to default pedal calibration
+If your pedal doesn't fit the pre-calibrated mapping or if you want a non-linear input curve:
+1. Go to https://microclutch.pages.dev/ on any browser
+2. Press connect and select TinyUSB Serial from the drop down
+3. Press Auto Calibrate and fully press and release pedal
+   - If auto calibration doesnt provide a satisfactory calibration the handles either side of the calibration gauge can be clicked and dragged
+   - The output number at the top of the screen should be a static 0 on pedal release and 1 on comfortable pedal depression
+4. If you wish to change the input curve of the pedal click and drag any of the handles along the graph line
+   - Input curve spline types can be changed using the buttons below the graph
+5. Click Save button to save the configuration to the pedal for all future use
