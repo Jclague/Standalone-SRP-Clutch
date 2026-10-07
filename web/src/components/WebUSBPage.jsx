@@ -553,7 +553,6 @@ export default function WebUSBPage() {
             onClick={isConnected ? disconnect : connect}
             disabled={!isSupported || isConnecting}
           >
-            <i className={`fa-solid ${isConnecting ? 'fa-spinner fa-spin' : isConnected ? 'fa-plug-circle-xmark' : 'fa-plug'}`}></i>
             {isConnecting ? 'Connecting...' : isConnected ? 'Disconnect' : 'Connect Device'}
           </button>
         </div>
@@ -620,7 +619,7 @@ export default function WebUSBPage() {
         <div className="calibration-gauge-card">
           <div className="gauge-header">
             <span className="gauge-title">
-              <i className="fa-solid fa-gauge-high"></i> Sensor Calibration
+            Sensor Calibration
               <span className="gauge-range-hint mono">({barMin} – {barMax})</span>
             </span>
             <span id="clamp-badge" className={`clamp-badge clamp-${clampState}`}>
@@ -721,7 +720,6 @@ export default function WebUSBPage() {
         {/* Hardware Diagnostics Section */}
         <div className="diagnostics-section">
           <button className="diag-toggle" onClick={() => setDiagOpen(!diagOpen)}>
-            <i className="fa-solid fa-microchip"></i>
             <span>Hardware Diagnostics & Telemetry</span>
             <i className="fa-solid fa-chevron-down toggle-chevron" style={{ transform: diagOpen ? 'rotate(0)' : 'rotate(-90deg)' }}></i>
           </button>

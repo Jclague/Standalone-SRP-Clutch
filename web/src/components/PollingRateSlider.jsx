@@ -26,7 +26,6 @@ export default function PollingRateSlider({ value = 1000, onChange, disabled = f
     <div className="polling-rate-control">
       <div className="polling-header">
         <div className="polling-title-group">
-          <i className="fa-solid fa-gauge-high polling-icon"></i>
           <span className="polling-title">Polling Rate</span>
         </div>
 
