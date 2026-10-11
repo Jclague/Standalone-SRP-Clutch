@@ -2,6 +2,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STATUS_PACKET_LENGTH,
+  STATUS_PACKET_LENGTH_V2,
+  CMD_SET_DEVICE_MODE,
   CURVE_PACKET_LENGTH,
   CAL_STATUS_PACKET_LENGTH,
   ACK_PACKET_LENGTH,
@@ -30,6 +32,24 @@ function createMockStatusBuffer(raw = 18500, norm = 0.525, ax = -12000, pollingR
   view.setUint8(16, 2);
   view.setUint8(17, 0);
   view.setUint8(18, 0);
+  return new Uint8Array(buf);
+}
+
+function createMockStatusBufferV2(raw = 18500, norm = 0.525, ax = -12000, pollingRate = 1000, hidMode = 0) {
+  const buf = new ArrayBuffer(20);
+  const view = new DataView(buf);
+  view.setUint8(0, 0x81);
+  view.setUint16(1, raw, true);
+  view.setFloat32(3, norm, true);
+  view.setInt16(7, ax, true);
+  view.setUint16(9, 17824, true);
+  view.setUint16(11, 19515, true);
+  view.setUint16(13, pollingRate, true);
+  view.setUint8(15, 0);
+  view.setUint8(16, 2);
+  view.setUint8(17, 4); // fw_minor = 4
+  view.setUint8(18, 0);
+  view.setUint8(19, hidMode);
   return new Uint8Array(buf);
 }
 
@@ -260,6 +280,37 @@ describe('WebUSB / Serial Protocol Parser', () => {
     assert.equal(packets[2].type, 'status');
     assert.equal(packets[2].data.rawAngle, 18350);
     assert.equal(leftover.length, 0);
+  });
+
+  test('parseStatusPacket correctly decodes 20-byte V2 status packets with hidMode', () => {
+    const joystickBuf = createMockStatusBufferV2(18500, 0.5, 0, 1000, 0);
+    const parsedJoystick = parseStatusPacket(joystickBuf, 0);
+    assert.equal(parsedJoystick.hidMode, 0);
+    assert.equal(parsedJoystick.fwVersion, '2.4.0');
+
+    const gamepadBuf = createMockStatusBufferV2(18500, 0.5, 0, 1000, 1);
+    const parsedGamepad = parseStatusPacket(gamepadBuf, 0);
+    assert.equal(parsedGamepad.hidMode, 1);
+    assert.equal(parsedGamepad.fwVersion, '2.4.0');
+  });
+
+  test('processIncomingBytes correctly extracts 20-byte V2 status packets in live stream', () => {
+    const v2Status = createMockStatusBufferV2(18600, 0.6, 5000, 2000, 0);
+    const { packets, leftover } = processIncomingBytes(null, v2Status);
+    assert.equal(packets.length, 1);
+    assert.equal(packets[0].type, 'status');
+    assert.equal(packets[0].data.rawAngle, 18600);
+    assert.equal(packets[0].data.hidMode, 0);
+    assert.equal(packets[0].data.pollingRate, 2000);
+    assert.equal(leftover.length, 0);
+  });
+
+  test('CMD_SET_DEVICE_MODE command ID is 0x0A with 2-byte binary payload', () => {
+    assert.equal(CMD_SET_DEVICE_MODE, 0x0A);
+    const modePayload = new Uint8Array([CMD_SET_DEVICE_MODE, 1]);
+    assert.equal(modePayload.length, 2);
+    assert.equal(modePayload[0], 0x0A);
+    assert.equal(modePayload[1], 1);
   });
 });
 

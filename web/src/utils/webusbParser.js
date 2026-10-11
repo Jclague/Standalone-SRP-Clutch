@@ -7,6 +7,8 @@ export const CMD_GET_CURVE = 0x05;
 export const CMD_SAVE_CURVE = 0x06;
 export const CMD_RESET_CURVE = 0x07;
 export const CMD_SET_CAL = 0x08;
+export const CMD_SET_POLLING_RATE = 0x09;
+export const CMD_SET_DEVICE_MODE = 0x0A;
 
 export const PACKET_ID_STATUS = 0x81;
 export const PACKET_ID_CAL_STATUS = 0x82;
@@ -14,6 +16,7 @@ export const PACKET_ID_ACK = 0x83;
 export const PACKET_ID_CURVE = 0x85;
 
 export const STATUS_PACKET_LENGTH = 19;
+export const STATUS_PACKET_LENGTH_V2 = 20;
 export const CURVE_PACKET_LENGTH = 34;
 export const CURVE_PACKET_LENGTH_6PT = 50;
 export const CAL_STATUS_PACKET_LENGTH = 2;
@@ -43,7 +46,8 @@ export const INITIAL_STATUS = Object.freeze({
   calMax: 0,
   pollingRate: 0,
   isCalibrating: 0,
-  fwVersion: '0.0.0'
+  fwVersion: '0.0.0',
+  hidMode: 0
 });
 
 export function ensureDataView(input) {
@@ -72,9 +76,10 @@ export function toUint8Array(input) {
 
 export function parseStatusPacket(view, offset = 0) {
   const dv = ensureDataView(view);
-  if (offset + STATUS_PACKET_LENGTH > dv.byteLength) {
+  const remaining = dv.byteLength - offset;
+  if (remaining < STATUS_PACKET_LENGTH) {
     throw new Error(
-      `Insufficient bytes for status packet: need ${STATUS_PACKET_LENGTH}, have ${dv.byteLength - offset}`
+      `Insufficient bytes for status packet: need ${STATUS_PACKET_LENGTH}, have ${remaining}`
     );
   }
   const id = dv.getUint8(offset);
@@ -83,6 +88,7 @@ export function parseStatusPacket(view, offset = 0) {
       `Invalid packet ID for status packet: expected 0x${PACKET_ID_STATUS.toString(16)}, got 0x${id.toString(16)}`
     );
   }
+  const hasV2 = remaining >= STATUS_PACKET_LENGTH_V2;
   return {
     rawAngle: dv.getUint16(offset + 1, true),
     normalized: dv.getFloat32(offset + 3, true),
@@ -91,7 +97,8 @@ export function parseStatusPacket(view, offset = 0) {
     calMax: dv.getUint16(offset + 11, true),
     pollingRate: dv.getUint16(offset + 13, true),
     isCalibrating: dv.getUint8(offset + 15),
-    fwVersion: `${dv.getUint8(offset + 16)}.${dv.getUint8(offset + 17)}.${dv.getUint8(offset + 18)}`
+    fwVersion: `${dv.getUint8(offset + 16)}.${dv.getUint8(offset + 17)}.${dv.getUint8(offset + 18)}`,
+    hidMode: hasV2 ? dv.getUint8(offset + 19) : 0
   };
 }
 
@@ -270,13 +277,17 @@ export function processIncomingBytes(leftoverBuffer, newChunk) {
     const id = view.getUint8(offset);
 
     if (id === PACKET_ID_STATUS) {
-      if (offset + STATUS_PACKET_LENGTH <= combined.length) {
+      const remaining = combined.length - offset;
+      const isV2 = remaining >= 18 && (view.getUint8(offset + 17) >= 4 || view.getUint8(offset + 16) > 2);
+      const packetLen = isV2 ? STATUS_PACKET_LENGTH_V2 : STATUS_PACKET_LENGTH;
+
+      if (remaining >= packetLen) {
         if (isValidStatusPacketCandidate(view, offset)) {
           packets.push({
             type: 'status',
             data: parseStatusPacket(view, offset)
           });
-          offset += STATUS_PACKET_LENGTH;
+          offset += packetLen;
         } else {
           // False header: advance by 1 to seek next valid header
           offset += 1;

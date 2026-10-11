@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useWebSerial, delayNextTick } from '../hooks/useWebSerial';
 import CurveEditor from './CurveEditor';
 import PollingRateSlider from './PollingRateSlider';
+import DeviceModeToggle from './DeviceModeToggle';
 import { computeSplineCoefficients, evaluateSpline } from '../utils/cubicSpline';
 import { MIN_FIRMWARE_VERSION, isFirmwareOutdated } from '../utils/webusbParser';
 import './WebUSBPage.css';
@@ -25,7 +26,8 @@ export default function WebUSBPage() {
     curveType,
     setCurveType,
     setCalRange,
-    setPollingRate
+    setPollingRate,
+    setDeviceMode
   } = useWebSerial();
 
   const isOutdated = isConnected && isFirmwareOutdated(status?.fwVersion);
@@ -54,6 +56,7 @@ export default function WebUSBPage() {
   const [dragHandle, setDragHandle] = useState(null);
   const [calRange, setCalRangeState] = useState({ min: 17758, max: 19484 });
   const [workingHz, setWorkingHz] = useState(1000);
+  const [workingMode, setWorkingMode] = useState(0);
   const [isDirty, setIsDirty] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const saveTimerRef = useRef(null);
@@ -117,6 +120,7 @@ export default function WebUSBPage() {
   // Initial sync from connected device EEPROM calibration
   const syncedCalRef = useRef(false);
   const syncedHzRef = useRef(false);
+  const syncedModeRef = useRef(false);
   useEffect(() => {
     if (isConnected) {
       if (!syncedCalRef.current && status?.calMin > 0 && status?.calMax > status?.calMin) {
@@ -130,9 +134,15 @@ export default function WebUSBPage() {
         syncedHzRef.current = true;
         setIsDirty(false);
       }
+      if (!syncedModeRef.current && status?.hidMode !== undefined) {
+        setWorkingMode(status.hidMode);
+        syncedModeRef.current = true;
+        setIsDirty(false);
+      }
     } else {
       syncedCalRef.current = false;
       syncedHzRef.current = false;
+      syncedModeRef.current = false;
       setIsDirty(false);
       setJustSaved(false);
       if (saveTimerRef.current) {
@@ -140,7 +150,7 @@ export default function WebUSBPage() {
         saveTimerRef.current = null;
       }
     }
-  }, [isConnected, status?.calMin, status?.calMax, status?.pollingRate, status?.pollingRateHz]);
+  }, [isConnected, status?.calMin, status?.calMax, status?.pollingRate, status?.pollingRateHz, status?.hidMode]);
 
   // Auto-calibration tracking state
   const preCalRangeRef = useRef(null);
@@ -419,6 +429,11 @@ export default function WebUSBPage() {
     await delayNextTick(30);
     // 3. Commit curve to pedal hardware and persist to EEPROM
     await saveCurve(curvePoints, curveType);
+    await delayNextTick(30);
+    // 4. Commit device USB mode if changed (MCU will reboot with new descriptor)
+    if (workingMode !== status?.hidMode) {
+      await setDeviceMode(workingMode);
+    }
 
     setIsDirty(false);
     setJustSaved(true);
@@ -704,6 +719,15 @@ export default function WebUSBPage() {
             setWorkingHz(hz);
             markDirty();
           }} 
+        />
+
+        <DeviceModeToggle
+          mode={workingMode}
+          disabled={!isConnected}
+          onChange={(newMode) => {
+            setWorkingMode(newMode);
+            markDirty();
+          }}
         />
 
         {/* Full-width dynamic Save Profile button */}

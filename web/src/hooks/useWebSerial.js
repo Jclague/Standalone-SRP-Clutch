@@ -18,6 +18,7 @@ export const CMD_SAVE_CURVE = 0x06;
 export const CMD_RESET_CURVE = 0x07;
 export const CMD_SET_CAL = 0x08;
 export const CMD_SET_POLLING_RATE = 0x09;
+export const CMD_SET_DEVICE_MODE = 0x0A;
 
 export const DEFAULT_CURVE_POINTS = [
   { x: 0.0, y: 0.0 },
@@ -38,7 +39,8 @@ const INITIAL_STATUS = {
   pollingRateHz: 0,
   isCalibrating: 0,
   firmwareVersion: '',
-  fwVersion: '0.0.0'
+  fwVersion: '0.0.0',
+  hidMode: 0
 };
 
 export const delayNextTick = (ms = 16) => new Promise(resolve => setTimeout(resolve, ms));
@@ -564,6 +566,18 @@ export function useWebSerial() {
     return true;
   };
 
+  const setDeviceMode = async (newMode) => {
+    const validMode = newMode === 1 ? 1 : 0;
+    setStatus(prev => ({ ...prev, hidMode: validMode }));
+    if (writerRef.current) {
+      const buf = new Uint8Array([CMD_SET_DEVICE_MODE, validMode]);
+      return await executeCommandSafe(async () => {
+        return await transferOutSafe(buf);
+      });
+    }
+    return true;
+  };
+
   const setCurve = async (points) => {
     if (!Array.isArray(points) || (points.length !== 4 && points.length !== 6)) return;
     curvePointsRef.current = points;
@@ -599,6 +613,7 @@ export function useWebSerial() {
     saveCurve,
     resetCurve,
     setCalRange,
-    setPollingRate
+    setPollingRate,
+    setDeviceMode
   };
 }

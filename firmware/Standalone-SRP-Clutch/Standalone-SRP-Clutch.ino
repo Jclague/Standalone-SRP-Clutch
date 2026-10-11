@@ -24,7 +24,7 @@ static const float INV_ACTIVE_RANGE = 1.0f / (1.0f - TOP_DEADZONE - BOTTOM_DEADZ
 unsigned long next_loop_us = 0;
 long polling_delay_us = (1000000UL / INIT_POLLING_HZ);
 
-#define CAL_MAGIC 0x4D435635
+#define CAL_MAGIC 0x4D435636
 
 struct calibration_t {
   uint32_t magic;
@@ -34,6 +34,7 @@ struct calibration_t {
   float curve_x[6];
   float curve_y[6];
   uint8_t curve_type; // 0 = Smooth (Cubic), 1 = Linear
+  uint8_t hid_mode;   // 0 = Joystick (default, Steam safe), 1 = Gamepad (compatibility)
 } cal;
 
 // Precalculated reciprocal span: 1.0f / (cal.max - cal.min) for division-free normalization
@@ -42,7 +43,7 @@ float cal_inv_span = 1.0f / (float)(MAX_ANGLE - MIN_ANGLE);
 Adafruit_USBD_HID hid;
 
 uint8_t hid_desc[] = {
-  0x05,0x01,0x09,0x05,0xA1,0x01,0x85,0x01,
+  0x05,0x01,0x09,0x04,0xA1,0x01,0x85,0x01,
   0x09,0x30,0x16,0x00,0x80,0x26,0xFF,0x7F,
   0x75,0x10,0x95,0x01,0x81,0x02,0xC0
 };
@@ -252,16 +253,25 @@ void resetCalibrationDefaults() {
   cal.curve_x[4] = 0.8f; cal.curve_y[4] = 0.8f;
   cal.curve_x[5] = 1.0f; cal.curve_y[5] = 1.0f;
   cal.curve_type = 0;
+  cal.hid_mode = 0; // Default: Joystick mode (Steam safe)
   saveCalibration();
 }
 
 void loadCalibration() {
   EEPROM.get(0, cal);
 
-  // Validate or reset
-  if (cal.magic != CAL_MAGIC || cal.max <= cal.min ||
+  // Seamless migration from MCV5
+  if (cal.magic == 0x4D435635) {
+    cal.magic = CAL_MAGIC;
+    cal.hid_mode = 0;
+    saveCalibration();
+  } else if (cal.magic != CAL_MAGIC || cal.max <= cal.min ||
       cal.polling_rate_hz < MIN_POLLING_HZ || cal.polling_rate_hz > MAX_POLLING_HZ) {
     resetCalibrationDefaults();
+  }
+
+  if (cal.hid_mode != 0 && cal.hid_mode != 1) {
+    cal.hid_mode = 0;
   }
 
   if (cal.curve_type != 0 && cal.curve_type != 1) {
@@ -332,6 +342,7 @@ struct __attribute__((packed)) status_packet_t {
   uint8_t fw_major;
   uint8_t fw_minor;
   uint8_t fw_patch;
+  uint8_t hid_mode; // 0 = Joystick (default), 1 = Gamepad (compatibility)
 };
 
 inline void sendStatus(uint16_t raw, float norm, int16_t ax) {
@@ -345,8 +356,9 @@ inline void sendStatus(uint16_t raw, float norm, int16_t ax) {
   pkt.polling_rate_hz = cal.polling_rate_hz;
   pkt.is_calibrating = calibrating ? 1 : 0;
   pkt.fw_major = 2;
-  pkt.fw_minor = 3;
-  pkt.fw_patch = 1;
+  pkt.fw_minor = 4;
+  pkt.fw_patch = 0;
+  pkt.hid_mode = cal.hid_mode;
   Serial.write((uint8_t*)&pkt, sizeof(pkt));
 }
 
@@ -442,6 +454,21 @@ void handleCommand(uint8_t* buf, int count) {
         }
       }
       break;
+    case 0x0A: // SET_DEVICE_MODE (2 bytes: 0x0A, mode: 0=Joystick, 1=Gamepad)
+      if (count >= 2) {
+        uint8_t new_mode = buf[1] ? 1 : 0;
+        if (cal.hid_mode != new_mode) {
+          cal.hid_mode = new_mode;
+          saveCalibration();
+          sendAck(cmd);
+          // Re-enumerate USB with new HID descriptor:
+          delay(150);
+          rp2040.reboot();
+        } else {
+          sendAck(cmd);
+        }
+      }
+      break;
   }
 }
 
@@ -460,6 +487,9 @@ void setup() {
 
   EEPROM.begin(128);
   loadCalibration();
+
+  // Set HID usage byte: 0x04 = Joystick (default, Steam safe), 0x05 = Gamepad (compatibility)
+  hid_desc[3] = (cal.hid_mode == 1) ? 0x05 : 0x04;
 
   hid.setReportDescriptor(hid_desc, sizeof(hid_desc));
   hid.begin();

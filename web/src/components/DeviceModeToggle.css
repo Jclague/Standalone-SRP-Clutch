@@ -1,0 +1,156 @@
+.device-mode-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  margin-top: 4px;
+}
+
+.device-mode-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.device-mode-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.device-mode-title i {
+  color: var(--accent-text);
+  font-size: 14px;
+}
+
+/* One wide button containing both options */
+.device-mode-segmented-toggle {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  height: 44px;
+  padding: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-sizing: border-box;
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.08);
+  transition: border-color 0.2s ease, opacity 0.2s ease;
+}
+
+.device-mode-segmented-toggle:hover:not(.is-disabled) {
+  border-color: var(--accent-border);
+}
+
+.device-mode-segmented-toggle.is-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Horizontal sliding pill that switches into focus */
+.device-mode-glider {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 1;
+  transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+/* In Joystick mode, glider sits on left */
+.device-mode-segmented-toggle.active-joystick .device-mode-glider {
+  transform: translateX(0);
+}
+
+/* In Gamepad mode, glider slides smoothly to the right */
+.device-mode-segmented-toggle.active-gamepad .device-mode-glider {
+  transform: translateX(100%);
+}
+
+/* Dark mode glider styling: uniform stylish blue for both options */
+[data-theme="dark"] .device-mode-segmented-toggle .device-mode-glider {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  box-shadow: 0 2px 10px rgba(37, 99, 235, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+/* Light mode glider styling: uniform vintage cream/linen for both options */
+[data-theme="light"] .device-mode-segmented-toggle .device-mode-glider {
+  background: linear-gradient(135deg, #dfd0ba 0%, #cfbd9e 100%);
+  box-shadow: 0 2px 8px rgba(70, 50, 30, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* Individual option buttons inside the wide container */
+.device-mode-btn {
+  flex: 1;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: transparent;
+  border: none;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.22s ease;
+  white-space: nowrap;
+}
+
+.device-mode-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.device-mode-btn:hover:not(:disabled) {
+  color: var(--text-h);
+}
+
+.device-mode-btn.focused {
+  font-weight: 600;
+}
+
+[data-theme="dark"] .device-mode-btn.focused {
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] .device-mode-btn.focused {
+  color: #211811;
+}
+
+.device-mode-btn .mode-sublabel {
+  font-size: 11px;
+  opacity: 0.8;
+  font-weight: 400;
+}
+
+.device-mode-btn.focused .mode-sublabel {
+  opacity: 0.95;
+  font-weight: 500;
+}
+
+.device-mode-hint-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  padding: 0 2px;
+}
+
+.device-mode-hint-text strong {
+  color: var(--text);
+}
