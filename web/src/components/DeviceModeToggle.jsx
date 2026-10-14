@@ -36,7 +36,7 @@ export default function DeviceModeToggle({ mode = 0, onChange, disabled = false 
 
       {/* One wide button container containing both options with sliding focus pill */}
       <div 
-        className={`device-mode-segmented-toggle ${isGamepad ? 'active-gamepad' : 'active-joystick'} ${disabled ? 'is-disabled' : ''}`}
+        className={`device-mode-segmented-toggle ${isGamepad ? 'active-gamepad' : 'active-clutch'} ${disabled ? 'is-disabled' : ''}`}
         onClick={() => handleToggle()}
         role="radiogroup"
         aria-label="USB Device Mode"
@@ -54,10 +54,23 @@ export default function DeviceModeToggle({ mode = 0, onChange, disabled = false 
           disabled={disabled}
           role="radio"
           aria-checked={!isGamepad}
-          title="Joystick Mode: DirectInput axis only. Steam Input will not hijack game controls."
+          title="Clutch Mode: Automobile Simulation Device (0–65,535). Steam Input will not hijack game controls."
         >
-          <i className="fa-solid fa-crosshairs"></i>
-          <span className="mode-label">Joystick</span>
+          <svg 
+            className="h-pattern-icon" 
+            viewBox="0 0 24 24" 
+            width="14" 
+            height="14" 
+            fill="none" 
+            stroke="currentColor" 
+            strokeWidth="2.2" 
+            strokeLinecap="round" 
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M5 4v16M19 4v16M5 12h14M12 4v16" />
+          </svg>
+          <span className="mode-label">Clutch</span>
           <span className="mode-sublabel">(Default)</span>
         </button>
 
@@ -71,7 +84,7 @@ export default function DeviceModeToggle({ mode = 0, onChange, disabled = false 
           disabled={disabled}
           role="radio"
           aria-checked={isGamepad}
-          title="Gamepad Mode: Emulates console gamepad. May be intercepted by Steam Input."
+          title="Gamepad Mode: Emulates console gamepad thumbstick (-32,767 to 32,767). May be intercepted by Steam Input."
         >
           <i className="fa-solid fa-gamepad"></i>
           <span className="mode-label">Gamepad</span>
@@ -82,11 +95,11 @@ export default function DeviceModeToggle({ mode = 0, onChange, disabled = false 
       <div className="device-mode-hint-text">
         {!isGamepad ? (
           <span>
-            <i className="fa-solid fa-shield-halved"></i> <strong>Joystick mode:</strong> Steam Input ignores this device. Prevents menu scrolling and phantom controller inputs in games.
+            <i className="fa-solid fa-shield-halved"></i> <strong>Clutch mode:</strong> Reports as an Automobile Simulation Device (0–65,535). Steam Input ignores this device to prevent phantom controller inputs, while racing sims detect it natively.
           </span>
         ) : (
           <span>
-            <i className="fa-solid fa-triangle-exclamation"></i> <strong>Gamepad mode:</strong> May be grabbed by Steam Input as an Xbox controller. Use only if a game requires gamepad detection.
+            <i className="fa-solid fa-triangle-exclamation"></i> <strong>Gamepad mode:</strong> Emulates a console gamepad thumbstick (-32,767 to 32,767). May be grabbed by Steam Input as an Xbox controller. Use only if a game requires gamepad detection.
           </span>
         )}
       </div>

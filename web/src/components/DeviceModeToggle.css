@@ -68,7 +68,8 @@
   transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
 
-/* In Joystick mode, glider sits on left */
+/* In Clutch / Joystick mode, glider sits on left */
+.device-mode-segmented-toggle.active-clutch .device-mode-glider,
 .device-mode-segmented-toggle.active-joystick .device-mode-glider {
   transform: translateX(0);
 }
@@ -109,6 +110,16 @@
   cursor: pointer;
   transition: color 0.22s ease;
   white-space: nowrap;
+}
+
+.device-mode-btn i,
+.device-mode-btn svg {
+  flex-shrink: 0;
+}
+
+.h-pattern-icon {
+  display: inline-block;
+  vertical-align: middle;
 }
 
 .device-mode-btn:focus-visible {

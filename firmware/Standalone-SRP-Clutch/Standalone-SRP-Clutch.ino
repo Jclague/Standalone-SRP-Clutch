@@ -42,13 +42,43 @@ float cal_inv_span = 1.0f / (float)(MAX_ANGLE - MIN_ANGLE);
 
 Adafruit_USBD_HID hid;
 
-uint8_t hid_desc[] = {
-  0x05,0x01,0x09,0x04,0xA1,0x01,0x85,0x01,
-  0x09,0x30,0x16,0x00,0x80,0x26,0xFF,0x7F,
-  0x75,0x10,0x95,0x01,0x81,0x02,0xC0
+// 1. Automobile Simulation Device (Clutch: 0 to 65535, 16-bit unipolar) - Default / Steam Safe
+const uint8_t hid_desc_simulation[] = {
+  0x05, 0x02,                    // Usage Page (Simulation Controls)
+  0x09, 0x02,                    // Usage (Automobile Simulation Device)
+  0xA1, 0x01,                    // Collection (Application)
+  0x85, 0x01,                    //   Report ID (1)
+  0x05, 0x02,                    //   Usage Page (Simulation Controls)
+  0x09, 0xBD,                    //   Usage (Clutch)
+  0x15, 0x00,                    //   Logical Minimum (0)
+  0x27, 0xFF, 0xFF, 0x00, 0x00,  //   Logical Maximum (65535)
+  0x75, 0x10,                    //   Report Size (16)
+  0x95, 0x01,                    //   Report Count (1)
+  0x81, 0x02,                    //   Input (Data, Var, Abs)
+  0xC0                           // End Collection
 };
 
-struct axis_t { int16_t x; } axis;
+// 2. Gamepad Mode (Left Thumbstick X: -32768 to 32767) - Compatibility
+const uint8_t hid_desc_gamepad[] = {
+  0x05, 0x01,                    // Usage Page (Generic Desktop)
+  0x09, 0x05,                    // Usage (Game Pad)
+  0xA1, 0x01,                    // Collection (Application)
+  0x85, 0x01,                    //   Report ID (1)
+  0x09, 0x30,                    //   Usage (X)
+  0x16, 0x00, 0x80,              //   Logical Minimum (-32768)
+  0x26, 0xFF, 0x7F,              //   Logical Maximum (32767)
+  0x75, 0x10,                    //   Report Size (16)
+  0x95, 0x01,                    //   Report Count (1)
+  0x81, 0x02,                    //   Input (Data, Var, Abs)
+  0xC0                           // End Collection
+};
+
+struct axis_t {
+  union {
+    int16_t x;
+    uint16_t val;
+  };
+} axis;
 
 // Precomputed cubic polynomial coefficients for division-free Horner evaluation:
 // S_i(t) = a[i] + t*(b[i] + t*(c[i] + t*d[i])) where t = (x - spline_x[i])
@@ -197,10 +227,20 @@ inline float processInput(uint16_t signal) {
   }
 }
 
-inline int16_t mapInputToAxis(float normSignal) {
-  if (normSignal <= 0.0001f) return -32767;
-  if (normSignal >= 0.9999f) return 32767;
-  return (int16_t)(((normSignal * 2.0f) - 1.0f) * 32767.0f);
+inline uint16_t mapInputToAxis(float normSignal) {
+  if (cal.hid_mode == 1) {
+    // Gamepad Mode: -32767 to 32767 (bipolar, centered at 0)
+    int16_t out;
+    if (normSignal <= 0.0001f) out = -32767;
+    else if (normSignal >= 0.9999f) out = 32767;
+    else out = (int16_t)(((normSignal * 2.0f) - 1.0f) * 32767.0f);
+    return (uint16_t)out;
+  } else {
+    // Automobile Simulation Mode: 0 to 65535 (full 16-bit unipolar, 0 at rest)
+    if (normSignal <= 0.0001f) return 0;
+    if (normSignal >= 0.9999f) return 65535;
+    return (uint16_t)(normSignal * 65535.0f);
+  }
 }
 
 // Bitbang 16-bit command word to Infineon TLI5012B over half-duplex SPI
@@ -357,7 +397,7 @@ inline void sendStatus(uint16_t raw, float norm, int16_t ax) {
   pkt.is_calibrating = calibrating ? 1 : 0;
   pkt.fw_major = 2;
   pkt.fw_minor = 4;
-  pkt.fw_patch = 0;
+  pkt.fw_patch = 1;
   pkt.hid_mode = cal.hid_mode;
   Serial.write((uint8_t*)&pkt, sizeof(pkt));
 }
@@ -488,10 +528,13 @@ void setup() {
   EEPROM.begin(128);
   loadCalibration();
 
-  // Set HID usage byte: 0x04 = Joystick (default, Steam safe), 0x05 = Gamepad (compatibility)
-  hid_desc[3] = (cal.hid_mode == 1) ? 0x05 : 0x04;
-
-  hid.setReportDescriptor(hid_desc, sizeof(hid_desc));
+  // Mode 0: Automobile Simulation Device (Clutch 0-65535, Steam Safe)
+  // Mode 1: Gamepad Mode (Left Thumbstick X -32767 to 32767, Compatibility)
+  if (cal.hid_mode == 1) {
+    hid.setReportDescriptor(hid_desc_gamepad, sizeof(hid_desc_gamepad));
+  } else {
+    hid.setReportDescriptor(hid_desc_simulation, sizeof(hid_desc_simulation));
+  }
   hid.begin();
 }
 
@@ -499,7 +542,7 @@ void loop() {
   uint16_t angle_raw = readAngle();
   float norm = processInput(angle_raw);
   float curve_norm = applyInputCurve(norm);
-  axis.x = mapInputToAxis(curve_norm);
+  axis.val = mapInputToAxis(curve_norm);
 
   updateCalibration(angle_raw);
 
