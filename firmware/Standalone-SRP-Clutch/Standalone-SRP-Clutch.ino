@@ -42,14 +42,15 @@ float cal_inv_span = 1.0f / (float)(MAX_ANGLE - MIN_ANGLE);
 
 Adafruit_USBD_HID hid;
 
-// 1. Automobile Simulation Device (Clutch: 0 to 65535, 16-bit unipolar) - Default / Steam Safe
+// 1. Standalone Clutch Mode (Generic Desktop Joystick - Slider: 0 to 65535, 16-bit unipolar)
+// Fully compatible with DirectInput, Assetto Corsa / Content Manager, iRacing, BeamNG
+// Steam Safe: reports as a Joystick Slider (0 at rest), never triggers Xbox controller emulation or phantom inputs
 const uint8_t hid_desc_simulation[] = {
-  0x05, 0x02,                    // Usage Page (Simulation Controls)
-  0x09, 0x02,                    // Usage (Automobile Simulation Device)
+  0x05, 0x01,                    // Usage Page (Generic Desktop)
+  0x09, 0x04,                    // Usage (Joystick)
   0xA1, 0x01,                    // Collection (Application)
   0x85, 0x01,                    //   Report ID (1)
-  0x05, 0x02,                    //   Usage Page (Simulation Controls)
-  0x09, 0xBD,                    //   Usage (Clutch)
+  0x09, 0x36,                    //   Usage (Slider)
   0x15, 0x00,                    //   Logical Minimum (0)
   0x27, 0xFF, 0xFF, 0x00, 0x00,  //   Logical Maximum (65535)
   0x75, 0x10,                    //   Report Size (16)
@@ -397,7 +398,7 @@ inline void sendStatus(uint16_t raw, float norm, int16_t ax) {
   pkt.is_calibrating = calibrating ? 1 : 0;
   pkt.fw_major = 2;
   pkt.fw_minor = 4;
-  pkt.fw_patch = 1;
+  pkt.fw_patch = 2;
   pkt.hid_mode = cal.hid_mode;
   Serial.write((uint8_t*)&pkt, sizeof(pkt));
 }
@@ -515,10 +516,6 @@ void handleCommand(uint8_t* buf, int count) {
 void setup() {
   Serial.begin(115200);
 
-  TinyUSBDevice.setManufacturerDescriptor("Jclague");
-  TinyUSBDevice.setProductDescriptor("Standalone SRP Clutch");
-  TinyUSBDevice.setID(0xFA57, 0xFA57);
-
   next_loop_us = micros();
 
   pinMode(DATA_PIN, OUTPUT);
@@ -528,11 +525,16 @@ void setup() {
   EEPROM.begin(128);
   loadCalibration();
 
-  // Mode 0: Automobile Simulation Device (Clutch 0-65535, Steam Safe)
-  // Mode 1: Gamepad Mode (Left Thumbstick X -32767 to 32767, Compatibility)
+  TinyUSBDevice.setManufacturerDescriptor("Jclague");
+  TinyUSBDevice.setProductDescriptor("Standalone SRP Clutch");
+
+  // Mode 0: Standalone Clutch Mode (Slider 0-65535, DirectInput & Content Manager compatible, Steam Safe) -> PID 0xFA58
+  // Mode 1: Gamepad Mode (Left Thumbstick X -32767 to 32767, Compatibility) -> PID 0xFA57
   if (cal.hid_mode == 1) {
+    TinyUSBDevice.setID(0xFA57, 0xFA57);
     hid.setReportDescriptor(hid_desc_gamepad, sizeof(hid_desc_gamepad));
   } else {
+    TinyUSBDevice.setID(0xFA57, 0xFA58);
     hid.setReportDescriptor(hid_desc_simulation, sizeof(hid_desc_simulation));
   }
   hid.begin();

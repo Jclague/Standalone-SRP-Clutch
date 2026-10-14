@@ -95,7 +95,7 @@ export default function DeviceModeToggle({ mode = 0, onChange, disabled = false 
       <div className="device-mode-hint-text">
         {!isGamepad ? (
           <span>
-            <i className="fa-solid fa-shield-halved"></i> <strong>Clutch mode:</strong> Reports as an Automobile Simulation Device (0–65,535). Steam Input ignores this device to prevent phantom controller inputs, while racing sims detect it natively.
+            <i className="fa-solid fa-shield-halved"></i> <strong>Clutch mode:</strong> Reports as a DirectInput Joystick Slider (0–65,535). Natively recognized by Content Manager, Assetto Corsa, and sim racing titles without Steam Input interference.
           </span>
         ) : (
           <span>
